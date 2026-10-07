@@ -1,0 +1,12 @@
+# Secrets
+credentials.json
+token.json
+token.json.*
+.env
+
+# Dependencies
+node_modules/
+
+# Local backup files
+server.js.*
+public.v2-working/
