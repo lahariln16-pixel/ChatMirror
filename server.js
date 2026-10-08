@@ -236,6 +236,530 @@ async function getPubSubToken() {
     return tokenInfo.token;
 }
 
+
+// --------------------------------------------------
+// GOOGLE WORKSPACE EVENTS SUBSCRIPTION
+// --------------------------------------------------
+
+const WORKSPACE_EVENTS_BASE =
+    'https://workspaceevents.googleapis.com/v1';
+
+const WORKSPACE_TARGET_RESOURCE =
+    '//chat.googleapis.com/spaces/-';
+
+const WORKSPACE_EVENT_TYPES = [
+    'google.workspace.chat.message.v1.created',
+    'google.workspace.chat.message.v1.updated',
+    'google.workspace.chat.message.v1.deleted'
+];
+
+const WORKSPACE_PUBSUB_TOPIC =
+    `projects/${PROJECT_ID}/topics/chat_events`;
+
+let workspaceSubscriptionName = null;
+
+async function getWorkspaceAccessToken() {
+    const result = await auth.getAccessToken();
+
+    if (!result?.token) {
+        throw new Error(
+            'Could not obtain Google Workspace access token'
+        );
+    }
+
+    return result.token;
+}
+
+function workspaceRequest(
+    url,
+    accessToken,
+    method = 'GET',
+    body = null
+) {
+    return new Promise((resolve, reject) => {
+        const parsed = new URL(url);
+
+        const requestBody = body
+            ? JSON.stringify(body)
+            : null;
+
+        const options = {
+            hostname: parsed.hostname,
+            path: parsed.pathname + parsed.search,
+            method,
+
+            headers: {
+                Authorization: `Bearer ${accessToken}`,
+                Accept: 'application/json'
+            }
+        };
+
+        if (requestBody) {
+            options.headers['Content-Type'] =
+                'application/json';
+
+            options.headers['Content-Length'] =
+                Buffer.byteLength(requestBody);
+        }
+
+        const req = require('https').request(
+            options,
+            res => {
+                let data = '';
+
+                res.setEncoding('utf8');
+
+                res.on('data', chunk => {
+                    data += chunk;
+                });
+
+                res.on('end', () => {
+                    let parsedData = {};
+
+                    try {
+                        parsedData =
+                            data
+                                ? JSON.parse(data)
+                                : {};
+                    } catch {
+                        parsedData = {
+                            raw: data
+                        };
+                    }
+
+                    if (
+                        res.statusCode >= 200 &&
+                        res.statusCode < 300
+                    ) {
+                        resolve(parsedData);
+                        return;
+                    }
+
+                    const error = new Error(
+                        `Workspace Events API returned HTTP ${res.statusCode}`
+                    );
+
+                    error.statusCode =
+                        res.statusCode;
+
+                    error.response =
+                        parsedData;
+
+                    reject(error);
+                });
+            }
+        );
+
+        req.on('error', reject);
+
+        if (requestBody) {
+            req.write(requestBody);
+        }
+
+        req.end();
+    });
+}
+
+
+// --------------------------------------------------
+// LIST EXISTING SUBSCRIPTIONS
+// --------------------------------------------------
+
+async function listWorkspaceSubscriptions() {
+    const accessToken =
+        await getWorkspaceAccessToken();
+
+    const url =
+        `${WORKSPACE_EVENTS_BASE}/subscriptions` +
+        `?filter=${encodeURIComponent(
+            `target_resource="${WORKSPACE_TARGET_RESOURCE}"`
+        )}`;
+
+    const response =
+        await workspaceRequest(
+            url,
+            accessToken
+        );
+
+    return response.subscriptions || [];
+}
+
+
+// --------------------------------------------------
+// WAIT FOR SUBSCRIPTION CREATION OPERATION
+// --------------------------------------------------
+
+async function waitForWorkspaceOperation(
+    operationName
+) {
+    const maxAttempts = 30;
+    const delayMs = 2000;
+
+    console.log(
+        '⏳ Waiting for Workspace Events subscription creation...'
+    );
+
+    for (
+        let attempt = 1;
+        attempt <= maxAttempts;
+        attempt++
+    ) {
+        const accessToken =
+            await getWorkspaceAccessToken();
+
+        const response =
+            await workspaceRequest(
+                `${WORKSPACE_EVENTS_BASE}/${operationName}`,
+                accessToken
+            );
+
+        if (response.done) {
+
+            if (response.error) {
+                const error = new Error(
+                    `Workspace Events operation failed: ${
+                        response.error.message ||
+                        'Unknown error'
+                    }`
+                );
+
+                error.response =
+                    response.error;
+
+                throw error;
+            }
+
+            const subscription =
+                response.response;
+
+            if (
+                !subscription ||
+                !subscription.name ||
+                !subscription.name.startsWith(
+                    'subscriptions/'
+                )
+            ) {
+                throw new Error(
+                    'Workspace Events operation completed without a valid subscription'
+                );
+            }
+
+            workspaceSubscriptionName =
+                subscription.name;
+
+            console.log(
+                '✅ Workspace Events subscription is ACTIVE'
+            );
+
+            console.log(
+                '   Subscription:',
+                subscription.name
+            );
+
+            if (subscription.expireTime) {
+                console.log(
+                    '   Expires:',
+                    subscription.expireTime
+                );
+            }
+
+            return subscription;
+        }
+
+        console.log(
+            `   ⏳ Creation still in progress... (${attempt}/${maxAttempts})`
+        );
+
+        await new Promise(resolve =>
+            setTimeout(
+                resolve,
+                delayMs
+            )
+        );
+    }
+
+    throw new Error(
+        'Workspace Events subscription creation timed out'
+    );
+}
+
+
+// --------------------------------------------------
+// CREATE SUBSCRIPTION
+// --------------------------------------------------
+
+async function createWorkspaceSubscription() {
+    const accessToken =
+        await getWorkspaceAccessToken();
+
+    console.log(
+        '🆕 Creating Google Chat Workspace Events subscription...'
+    );
+
+    const response =
+        await workspaceRequest(
+            `${WORKSPACE_EVENTS_BASE}/subscriptions`,
+            accessToken,
+            'POST',
+            {
+                targetResource:
+                    WORKSPACE_TARGET_RESOURCE,
+
+                eventTypes:
+                    WORKSPACE_EVENT_TYPES,
+
+                notificationEndpoint: {
+                    pubsubTopic:
+                        WORKSPACE_PUBSUB_TOPIC
+                },
+
+                payloadOptions: {
+                    includeResource: true
+                }
+            }
+        );
+
+    /*
+     * Workspace Events can return a
+     * long-running operation.
+     */
+    if (
+        response.name &&
+        response.name.startsWith(
+            'operations/'
+        )
+    ) {
+        console.log(
+            '   Operation:',
+            response.name
+        );
+
+        return await waitForWorkspaceOperation(
+            response.name
+        );
+    }
+
+    /*
+     * Handle an immediate subscription response.
+     */
+    if (
+        response.name &&
+        response.name.startsWith(
+            'subscriptions/'
+        )
+    ) {
+        workspaceSubscriptionName =
+            response.name;
+
+        console.log(
+            '✅ Workspace Events subscription created'
+        );
+
+        console.log(
+            '   Subscription:',
+            response.name
+        );
+
+        if (response.expireTime) {
+            console.log(
+                '   Expires:',
+                response.expireTime
+            );
+        }
+
+        return response;
+    }
+
+    throw new Error(
+        'Unexpected Workspace Events API response while creating subscription'
+    );
+}
+
+
+// --------------------------------------------------
+// RENEW SUBSCRIPTION
+// --------------------------------------------------
+
+async function renewWorkspaceSubscription(
+    subscription
+) {
+    const accessToken =
+        await getWorkspaceAccessToken();
+
+    const name =
+        subscription.name;
+
+    console.log(
+        '🔄 Renewing Google Chat Workspace Events subscription...'
+    );
+
+    console.log(
+        '   Subscription:',
+        name
+    );
+
+    const response =
+        await workspaceRequest(
+            `${WORKSPACE_EVENTS_BASE}/${name}`,
+            accessToken,
+            'PATCH',
+            {
+                ttl: '0s'
+            }
+        );
+
+    workspaceSubscriptionName =
+        name;
+
+    console.log(
+        '✅ Workspace Events subscription renewed'
+    );
+
+    if (response.expireTime) {
+        console.log(
+            '   New expiry:',
+            response.expireTime
+        );
+    }
+
+    return response;
+}
+
+
+// --------------------------------------------------
+// ENSURE ACTIVE SUBSCRIPTION
+// --------------------------------------------------
+
+async function ensureWorkspaceSubscription() {
+    try {
+        console.log(
+            '🔎 Checking Google Workspace Events subscription...'
+        );
+
+        const subscriptions =
+            await listWorkspaceSubscriptions();
+
+        const matching =
+            subscriptions
+                .filter(subscription =>
+                    subscription.targetResource ===
+                    WORKSPACE_TARGET_RESOURCE
+                )
+                .filter(subscription =>
+                    subscription.state === 'ACTIVE' ||
+                    subscription.state === 'CREATING'
+                );
+
+        if (matching.length === 0) {
+            console.log(
+                '⚠️ No active Chat Events subscription found.'
+            );
+
+            await createWorkspaceSubscription();
+
+            return;
+        }
+
+        /*
+         * Prefer the subscription we already know.
+         * Otherwise use the first matching active one.
+         */
+        const subscription =
+            matching.find(item =>
+                item.name ===
+                workspaceSubscriptionName
+            ) || matching[0];
+
+        workspaceSubscriptionName =
+            subscription.name;
+
+        console.log(
+            '   Subscription:',
+            subscription.name
+        );
+
+        console.log(
+            '   State:',
+            subscription.state
+        );
+
+        if (subscription.expireTime) {
+            const expiresAt =
+                new Date(
+                    subscription.expireTime
+                ).getTime();
+
+            const remaining =
+                expiresAt -
+                Date.now();
+
+            const remainingMinutes =
+                Math.round(
+                    remaining / 60000
+                );
+
+            console.log(
+                `   Time remaining: ${remainingMinutes} minutes`
+            );
+
+            /*
+             * Renew with plenty of time left.
+             */
+            if (
+                remaining <
+                90 * 60 * 1000
+            ) {
+                await renewWorkspaceSubscription(
+                    subscription
+                );
+            } else {
+                console.log(
+                    '✅ Subscription has sufficient lifetime'
+                );
+            }
+        } else {
+            console.log(
+                '✅ Subscription is active without an expiry timestamp'
+            );
+        }
+
+    } catch (error) {
+        console.error(
+            '❌ Workspace Events subscription check failed:'
+        );
+
+        console.error(
+            error.response ||
+            error.message ||
+            error
+        );
+    }
+}
+
+
+// --------------------------------------------------
+// START SUBSCRIPTION MANAGER
+// --------------------------------------------------
+
+function startWorkspaceSubscriptionManager() {
+    console.log(
+        '🔄 Workspace Events subscription manager started'
+    );
+
+    /*
+     * Check immediately on startup.
+     */
+    ensureWorkspaceSubscription();
+
+    /*
+     * Then check every 30 minutes.
+     */
+    setInterval(
+        ensureWorkspaceSubscription,
+        30 * 60 * 1000
+    );
+}
+
 async function pullPubSub() {
     const accessToken = await getPubSubToken();
 
@@ -693,6 +1217,8 @@ server.on('request', async (req, res) => {
 // --------------------------------------------------
 // START
 // --------------------------------------------------
+
+startWorkspaceSubscriptionManager();
 
 server.listen(PORT, HOST, () => {
     console.log('');
