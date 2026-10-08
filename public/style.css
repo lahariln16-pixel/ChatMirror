@@ -1094,3 +1094,38 @@ button {
     transform: translateY(0);
   }
 }
+
+/* =====================================================
+   UNREAD CHAT BADGE
+===================================================== */
+
+.space-item.has-unread {
+  position: relative;
+}
+
+.space-unread-badge {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+
+  margin-left: auto;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  border-radius: 999px;
+
+  background: #a8002c;
+  color: #ffffff;
+
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1;
+
+  box-sizing: border-box;
+
+  box-shadow:
+    0 0 8px rgba(168, 0, 44, 0.45);
+}
+

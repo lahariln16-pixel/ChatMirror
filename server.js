@@ -128,87 +128,112 @@ function isAuthenticated(req) {
 // CHAT API
 // --------------------------------------------------
 
-async function listSpaces() {
-    const spaces = [];
-    let pageToken;
+async function listSpaces(pageToken = null) {
 
-    do {
-        const response = await chat.spaces.list({
-            pageSize: 100,
-            pageToken
-        });
+    const request = {
+        pageSize: 5
+    };
 
-        if (response.data.spaces) {
-            spaces.push(...response.data.spaces);
-        }
+    if (pageToken) {
+        request.pageToken = pageToken;
+    }
 
-        pageToken = response.data.nextPageToken;
-    } while (pageToken);
+    const response =
+        await chat.spaces.list(request);
+
+    const spaces =
+        response.data.spaces || [];
 
     // Enrich direct messages with the other member's name/avatar.
     for (const space of spaces) {
-        if (space.spaceType !== 'DIRECT_MESSAGE') {
+
+        if (
+            space.spaceType !== 'DIRECT_MESSAGE'
+        ) {
             continue;
         }
 
         try {
-            const response = await chat.spaces.members.list({
-                parent: space.name,
-                pageSize: 100
-            });
 
-            const members = response.data.memberships || [];
+            const response =
+                await chat.spaces.members.list({
+                    parent: space.name,
+                    pageSize: 100
+                });
+
+            const members =
+                response.data.memberships || [];
 
             // Find the human member who isn't the authenticated user.
-            const otherMember = members.find(member => {
-                const name = member.member?.name || '';
-                return !name.endsWith('/' + process.env.GOOGLE_CHAT_USER_ID);
-            }) || members[0];
+            const otherMember =
+                members.find(member => {
+                    const name =
+                        member.member?.name || '';
+
+                    return !name.endsWith(
+                        '/' +
+                        process.env.GOOGLE_CHAT_USER_ID
+                    );
+                }) || members[0];
 
             if (otherMember?.member) {
-                const person = otherMember.member;
+
+                const person =
+                    otherMember.member;
 
                 if (person.displayName) {
-                    space.displayName = person.displayName;
+                    space.displayName =
+                        person.displayName;
                 }
 
                 if (person.avatarUrl) {
-                    space.avatarUrl = person.avatarUrl;
+                    space.avatarUrl =
+                        person.avatarUrl;
                 }
-
-                space.dmMember = person;
             }
+
         } catch (error) {
+
             console.warn(
-                `⚠️ Could not resolve DM member for ${space.name}:`,
+                '⚠️ Failed to enrich DM:',
+                space.name,
                 error.message
             );
         }
     }
 
-    return spaces;
+    return {
+        spaces,
+        nextPageToken:
+            response.data.nextPageToken || null
+    };
 }
 
-async function listMessages(spaceName) {
-    const messages = [];
-    let pageToken;
+async function listMessages(
+    spaceName,
+    pageToken = null
+) {
+    const request = {
+        parent: spaceName,
+        pageSize: 100,
+        orderBy: 'createTime DESC'
+    };
 
-    do {
-        const response = await chat.spaces.messages.list({
-            parent: spaceName,
-            pageSize: 100,
-            orderBy: 'createTime DESC',
-            pageToken
-        });
+    if (pageToken) {
+        request.pageToken = pageToken;
+    }
 
-        if (response.data.messages) {
-            messages.push(...response.data.messages);
-        }
+    const response =
+        await chat.spaces.messages.list(
+            request
+        );
 
-        pageToken = response.data.nextPageToken;
-    } while (pageToken);
-
-    return messages;
+    return {
+        messages:
+            response.data.messages || [],
+        nextPageToken:
+            response.data.nextPageToken || null
+    };
 }
 
 async function sendMessage(
@@ -1120,7 +1145,8 @@ server.on('request', async (req, res) => {
 
         if (req.method === 'GET' && url.pathname === '/api/auth/status') {
             return sendJSON(res, 200, {
-                authenticated: isAuthenticated(req)
+                authenticated: isAuthenticated(req),
+                userId: process.env.GOOGLE_CHAT_USER_ID || null
             });
         }
 
@@ -1395,10 +1421,20 @@ server.on('request', async (req, res) => {
         // ---------------- SPACES ----------------
 
         if (req.method === 'GET' && url.pathname === '/api/spaces') {
-            const spaces = await listSpaces();
+
+            const pageToken =
+                String(
+                    url.searchParams.get('pageToken') || ''
+                ).trim();
+
+            const result =
+                await listSpaces(
+                    pageToken || null
+                );
 
             return sendJSON(res, 200, {
-                spaces
+                spaces: result.spaces,
+                nextPageToken: result.nextPageToken
             });
         }
 
@@ -1413,12 +1449,23 @@ server.on('request', async (req, res) => {
                 .slice('/api/spaces/'.length)
                 .slice(0, -'/messages'.length);
 
-            const spaceName = decodeURIComponent(encodedSpace);
+            const spaceName =
+                decodeURIComponent(encodedSpace);
 
-            const messages = await listMessages(spaceName);
+            const pageToken =
+                String(
+                    url.searchParams.get('pageToken') || ''
+                ).trim();
+
+            const result =
+                await listMessages(
+                    spaceName,
+                    pageToken || null
+                );
 
             return sendJSON(res, 200, {
-                messages
+                messages: result.messages,
+                nextPageToken: result.nextPageToken
             });
         }
 

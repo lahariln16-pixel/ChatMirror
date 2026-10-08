@@ -256,8 +256,150 @@ function createReplyButton(message) {
 createReplyBar();
 
 let spaces = [];
-let selectedSpace = null;
-let socket = null;
+
+// Chat list pagination
+let spacesNextPageToken = null;
+let loadingMoreSpaces = false;
+let hasMoreSpaces = false;
+
+
+/* =====================================================
+   UNREAD MESSAGE STATE
+===================================================== */
+
+const UNREAD_STORAGE_KEY =
+  'chatmirror_unread_counts';
+
+let unreadCounts = {};
+
+try {
+
+  const saved =
+    localStorage.getItem(
+      UNREAD_STORAGE_KEY
+    );
+
+  if (saved) {
+    const parsed =
+      JSON.parse(saved);
+
+    if (
+      parsed &&
+      typeof parsed === 'object'
+    ) {
+      unreadCounts = parsed;
+    }
+  }
+
+} catch (error) {
+
+  console.warn(
+    '⚠️ Could not load unread counts:',
+    error
+  );
+}
+
+
+function saveUnreadCounts() {
+
+  try {
+
+    localStorage.setItem(
+      UNREAD_STORAGE_KEY,
+      JSON.stringify(unreadCounts)
+    );
+
+  } catch (error) {
+
+    console.warn(
+      '⚠️ Could not save unread counts:',
+      error
+    );
+  }
+}
+
+
+function getUnreadCount(spaceName) {
+
+  if (!spaceName) {
+    return 0;
+  }
+
+  return Number(
+    unreadCounts[spaceName] || 0
+  );
+}
+
+
+function setUnreadCount(
+  spaceName,
+  count
+) {
+
+  if (!spaceName) {
+    return;
+  }
+
+  const safeCount =
+    Math.max(
+      0,
+      Number(count) || 0
+    );
+
+  if (safeCount === 0) {
+    delete unreadCounts[spaceName];
+  } else {
+    unreadCounts[spaceName] =
+      safeCount;
+  }
+
+  saveUnreadCounts();
+}
+
+
+function incrementUnread(
+  spaceName
+) {
+
+  if (!spaceName) {
+    return;
+  }
+
+  const current =
+    getUnreadCount(spaceName);
+
+  setUnreadCount(
+    spaceName,
+    current + 1
+  );
+
+  renderSpaces();
+  updateLoadMoreSpacesButton();
+}
+
+
+function clearUnread(
+  spaceName
+) {
+
+  if (!spaceName) {
+    return;
+  }
+
+  if (
+    getUnreadCount(spaceName) === 0
+  ) {
+    return;
+  }
+
+  setUnreadCount(
+    spaceName,
+    0
+  );
+
+  renderSpaces();
+  updateLoadMoreSpacesButton();
+}
 
 /* =====================================================
    REPLY STATE
@@ -271,6 +413,8 @@ let socket = null;
    AUTH
 ===================================================== */
 
+let currentUserId = null;
+
 async function checkAuth() {
   try {
     const response = await fetch(
@@ -282,6 +426,9 @@ async function checkAuth() {
     );
 
     const data = await response.json();
+
+    currentUserId =
+      data.userId || null;
 
     if (data.authenticated) {
       showApp();
@@ -585,6 +732,15 @@ function connectWebSocket() {
 
 async function loadSpaces() {
 
+  spacesNextPageToken =
+    null;
+
+  loadingMoreSpaces =
+    false;
+
+  hasMoreSpaces =
+    false;
+
   spacesList.innerHTML =
     '<div class="loading">Loading chats...</div>';
 
@@ -612,7 +768,14 @@ async function loadSpaces() {
     spaces =
       data.spaces || [];
 
+    spacesNextPageToken =
+      data.nextPageToken || null;
+
+    hasMoreSpaces =
+      Boolean(spacesNextPageToken);
+
     renderSpaces();
+    updateLoadMoreSpacesButton();
 
   } catch (error) {
 
@@ -621,6 +784,155 @@ async function loadSpaces() {
     spacesList.innerHTML =
       '<div class="loading">Failed to load chats.</div>';
   }
+}
+
+async function loadMoreSpaces() {
+
+  if (
+    loadingMoreSpaces ||
+    !spacesNextPageToken
+  ) {
+    return;
+  }
+
+  loadingMoreSpaces =
+    true;
+
+  updateLoadMoreSpacesButton();
+
+  try {
+
+    const pageToken =
+      encodeURIComponent(
+        spacesNextPageToken
+      );
+
+    const response =
+      await fetch(
+        `/api/spaces?pageToken=${pageToken}`,
+        {
+          credentials: 'same-origin',
+          cache: 'no-store'
+        }
+      );
+
+    if (
+      response.status === 401
+    ) {
+      showLogin();
+      return;
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        `HTTP ${response.status}`
+      );
+    }
+
+    const data =
+      await response.json();
+
+    const newSpaces =
+      data.spaces || [];
+
+    /*
+     * Avoid duplicates in case an already-loaded
+     * space appears again between API pages.
+     */
+    const existingNames =
+      new Set(
+        spaces.map(
+          space => space.name
+        )
+      );
+
+    for (
+      const space of newSpaces
+    ) {
+      if (
+        !existingNames.has(
+          space.name
+        )
+      ) {
+        spaces.push(space);
+        existingNames.add(space.name);
+      }
+    }
+
+    spacesNextPageToken =
+      data.nextPageToken || null;
+
+    hasMoreSpaces =
+      Boolean(
+        spacesNextPageToken
+      );
+
+    renderSpaces();
+    updateLoadMoreSpacesButton();
+
+  } catch (error) {
+
+    console.error(
+      'Failed to load more chats:',
+      error
+    );
+
+  } finally {
+
+    loadingMoreSpaces =
+      false;
+
+    updateLoadMoreSpacesButton();
+  }
+}
+
+
+function updateLoadMoreSpacesButton() {
+
+  let button =
+    document.querySelector(
+      '.load-more-spaces-button'
+    );
+
+  if (!hasMoreSpaces) {
+
+    if (button) {
+      button.remove();
+    }
+
+    return;
+  }
+
+  if (!button) {
+
+    button =
+      document.createElement(
+        'button'
+      );
+
+    button.type =
+      'button';
+
+    button.className =
+      'load-more-spaces-button';
+
+    button.addEventListener(
+      'click',
+      loadMoreSpaces
+    );
+
+    spacesList.appendChild(
+      button
+    );
+  }
+
+  button.textContent =
+    loadingMoreSpaces
+      ? 'Loading more chats...'
+      : '↓ Load more chats';
+
+  button.disabled =
+    loadingMoreSpaces;
 }
 
 
@@ -719,8 +1031,42 @@ function renderSpaces() {
     info.appendChild(title);
     info.appendChild(type);
 
+    const unreadCount =
+      getUnreadCount(space.name);
+
+    let badge = null;
+
+    if (unreadCount > 0) {
+
+      item.classList.add(
+        'has-unread'
+      );
+
+      badge =
+        document.createElement('div');
+
+      badge.className =
+        'space-unread-badge';
+
+      badge.textContent =
+        unreadCount > 99
+          ? '99+'
+          : String(unreadCount);
+    }
+
+    /*
+      Keep the conversation layout in the
+      natural order:
+
+      avatar → conversation info → unread badge
+    */
+
     item.appendChild(avatar);
     item.appendChild(info);
+
+    if (badge) {
+      item.appendChild(badge);
+    }
 
     item.addEventListener(
       'click',
@@ -763,6 +1109,15 @@ async function selectSpace(space) {
   selectedSpace =
     space;
 
+  /*
+    Opening a conversation marks its
+    unread messages as read.
+  */
+
+  clearUnread(
+    space.name
+  );
+
   renderSpaces();
 
   chatTitle.textContent =
@@ -772,6 +1127,15 @@ async function selectSpace(space) {
     false;
 
   sendButton.disabled =
+    false;
+
+  messageNextPageToken =
+    null;
+
+  loadingOlderMessages =
+    false;
+
+  hasOlderMessages =
     false;
 
   messages.innerHTML =
@@ -803,9 +1167,17 @@ async function selectSpace(space) {
     const data =
       await response.json();
 
+    messageNextPageToken =
+      data.nextPageToken || null;
+
+    hasOlderMessages =
+      Boolean(messageNextPageToken);
+
     renderMessages(
       data.messages || []
     );
+
+    updateOlderMessagesButton();
 
   } catch (error) {
 
@@ -815,7 +1187,6 @@ async function selectSpace(space) {
       '<div class="loading">Failed to load messages.</div>';
   }
 }
-
 
 /* =====================================================
    MESSAGE HELPERS
@@ -1146,6 +1517,282 @@ function renderAttachments(container, message) {
 /* =====================================================
    MESSAGE RENDERING
 ===================================================== */
+
+async function loadOlderMessages() {
+
+  if (
+    loadingOlderMessages ||
+    !messageNextPageToken ||
+    !selectedSpace
+  ) {
+    return;
+  }
+
+  loadingOlderMessages =
+    true;
+
+  const button =
+    document.querySelector(
+      '.load-older-button'
+    );
+
+  if (button) {
+    button.disabled =
+      true;
+
+    button.textContent =
+      'Loading older messages...';
+  }
+
+  try {
+
+    const encoded =
+      encodeURIComponent(
+        selectedSpace.name
+      );
+
+    const pageToken =
+      encodeURIComponent(
+        messageNextPageToken
+      );
+
+    const response =
+      await fetch(
+        `/api/spaces/${encoded}/messages?pageToken=${pageToken}`,
+        {
+          credentials: 'same-origin',
+          cache: 'no-store'
+        }
+      );
+
+    if (
+      response.status === 401
+    ) {
+      showLogin();
+      return;
+    }
+
+    if (!response.ok) {
+      throw new Error(
+        `HTTP ${response.status}`
+      );
+    }
+
+    const data =
+      await response.json();
+
+    const olderMessages =
+      data.messages || [];
+
+    const previousHeight =
+      messages.scrollHeight;
+
+    const previousTop =
+      messages.scrollTop;
+
+    prependMessages(
+      olderMessages
+    );
+
+    messageNextPageToken =
+      data.nextPageToken || null;
+
+    hasOlderMessages =
+      Boolean(messageNextPageToken);
+
+    updateOlderMessagesButton();
+
+    /*
+     * Keep the user's viewport anchored.
+     * Adding older messages above should not
+     * visually jump the conversation.
+     */
+    const newHeight =
+      messages.scrollHeight;
+
+    messages.scrollTop =
+      previousTop +
+      (newHeight - previousHeight);
+
+  } catch (error) {
+
+    console.error(
+      'Failed to load older messages:',
+      error
+    );
+
+    if (button) {
+      button.textContent =
+        '↑ Load older messages';
+    }
+
+  } finally {
+
+    loadingOlderMessages =
+      false;
+
+    updateOlderMessagesButton();
+  }
+}
+
+
+function prependMessages(messageList) {
+
+  if (!messageList.length) {
+    return;
+  }
+
+  const fragment =
+    document.createDocumentFragment();
+
+  const sorted =
+    [...messageList]
+      .sort(
+        (a, b) =>
+          new Date(a.createTime || 0) -
+          new Date(b.createTime || 0)
+      );
+
+  for (
+    const message of sorted
+  ) {
+
+    if (
+      !message ||
+      !message.name
+    ) {
+      continue;
+    }
+
+    if (
+      findMessageElement(
+        message.name
+      )
+    ) {
+      continue;
+    }
+
+    const empty =
+      messages.querySelector(
+        '.empty-state'
+      );
+
+    if (empty) {
+      empty.remove();
+    }
+
+    /*
+     * appendMessage() normally appends to
+     * the conversation. Temporarily create
+     * the message in a detached container,
+     * then move it into the real container.
+     */
+    const holder =
+      document.createElement(
+        'div'
+      );
+
+    const originalMessages =
+      messages;
+
+    /*
+     * We need the existing appendMessage()
+     * logic without duplicating its large
+     * renderer, so use a temporary live
+     * container.
+     */
+    holder.className =
+      'messages-temp-holder';
+
+    document.body.appendChild(
+      holder
+    );
+
+    /*
+     * Swap the global message container
+     * reference temporarily.
+     */
+    messages =
+      holder;
+
+    appendMessage(
+      message,
+      false
+    );
+
+    messages =
+      originalMessages;
+
+    const rendered =
+      holder.firstElementChild;
+
+    if (rendered) {
+      fragment.appendChild(
+        rendered
+      );
+    }
+
+    holder.remove();
+  }
+
+  messages.prepend(
+    fragment
+  );
+}
+
+
+function updateOlderMessagesButton() {
+
+  let button =
+    document.querySelector(
+      '.load-older-button'
+    );
+
+  if (!hasOlderMessages) {
+
+    if (button) {
+      button.remove();
+    }
+
+    return;
+  }
+
+  if (!button) {
+
+    button =
+      document.createElement(
+        'button'
+      );
+
+    button.type =
+      'button';
+
+    button.className =
+      'load-older-button';
+
+    button.addEventListener(
+      'click',
+      loadOlderMessages
+    );
+
+    /*
+     * Put the button at the very top
+     * of the message container.
+     */
+    messages.prepend(
+      button
+    );
+  }
+
+  button.textContent =
+    loadingOlderMessages
+      ? 'Loading older messages...'
+      : '↑ Load older messages';
+
+  button.disabled =
+    loadingOlderMessages;
+}
+
 
 function renderMessages(messageList) {
 
@@ -1590,7 +2237,7 @@ function handleLiveEvent(payload) {
       message: {...}
     }
 
-    and the older:
+    and:
 
     payload = {
       eventType: "...",
@@ -1616,17 +2263,46 @@ function handleLiveEvent(payload) {
     '';
 
   /*
-    Ignore events from other spaces.
+    Determine which space this message
+    belongs to.
   */
 
-  if (
-    selectedSpace &&
-    message.space?.name &&
-    message.space.name !==
-      selectedSpace.name
-  ) {
+  const spaceName =
+    message.space?.name ||
+    (
+      message.name &&
+      message.name.includes('/messages/')
+        ? message.name.split('/messages/')[0]
+        : null
+    );
+
+  if (!spaceName) {
+    console.warn(
+      '⚠️ Live message has no space:',
+      message
+    );
     return;
   }
+
+  /*
+    Determine whether this message was
+    sent by the currently authenticated
+    Google Chat user.
+  */
+
+  const senderName =
+    message.sender?.name || '';
+
+  const ownUserName =
+    currentUserId
+      ? `users/${currentUserId}`
+      : '';
+
+  const isOwnMessage =
+    Boolean(
+      ownUserName &&
+      senderName === ownUserName
+    );
 
   /*
     CREATED
@@ -1636,13 +2312,59 @@ function handleLiveEvent(payload) {
     eventType.includes('created')
   ) {
 
-    if (!selectedSpace) {
+    /*
+      Never create an unread notification
+      for our own messages.
+    */
+
+    if (isOwnMessage) {
+
+      if (
+        selectedSpace &&
+        spaceName === selectedSpace.name
+      ) {
+        appendMessage(
+          message,
+          true
+        );
+      }
+
       return;
     }
 
-    appendMessage(
-      message,
-      true
+    /*
+      Current conversation:
+      show the message normally,
+      but don't increase unread.
+    */
+
+    if (
+      selectedSpace &&
+      spaceName === selectedSpace.name
+    ) {
+
+      appendMessage(
+        message,
+        true
+      );
+
+      return;
+    }
+
+    /*
+      Another conversation:
+      increase its unread count.
+    */
+
+    incrementUnread(
+      spaceName
+    );
+
+    console.log(
+      '🔴 Unread message:',
+      spaceName,
+      'count:',
+      getUnreadCount(spaceName)
     );
 
     return;
@@ -1650,28 +2372,25 @@ function handleLiveEvent(payload) {
 
   /*
     UPDATED
+
+    Editing a message should not create
+    a new unread notification.
   */
 
   if (
     eventType.includes('updated')
   ) {
 
-    if (!selectedSpace) {
-      return;
-    }
-
     if (
-      message.space?.name &&
-      message.space.name !==
-        selectedSpace.name
+      selectedSpace &&
+      spaceName === selectedSpace.name
     ) {
-      return;
-    }
 
-    appendMessage(
-      message,
-      true
-    );
+      appendMessage(
+        message,
+        true
+      );
+    }
 
     return;
   }
@@ -1684,11 +2403,20 @@ function handleLiveEvent(payload) {
     eventType.includes('deleted')
   ) {
 
-    deleteMessage(
-      message.name
-    );
+    if (
+      selectedSpace &&
+      spaceName === selectedSpace.name
+    ) {
+
+      deleteMessage(
+        message.name
+      );
+    }
+
+    return;
   }
 }
+
 
 
 /* =====================================================
