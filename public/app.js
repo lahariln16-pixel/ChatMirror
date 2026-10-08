@@ -46,12 +46,225 @@ const messageInput =
 const sendButton =
   document.getElementById('sendButton');
 
+const fileInput =
+  document.getElementById('fileInput');
+
+const attachButton =
+  document.getElementById('attachButton');
+
+const attachmentLabel =
+  document.getElementById('attachmentLabel');
+
 const mobileMenuButton =
   document.getElementById('mobileMenuButton');
+
+
+/* =====================================================
+   REPLY UI
+===================================================== */
+
+let replyingTo = null;
+let replyBar = null;
+let replyBarName = null;
+let replyBarText = null;
+
+function createReplyBar() {
+
+  if (replyBar) {
+    return;
+  }
+
+  const composer =
+    document.querySelector('.composer');
+
+  if (!composer) {
+    return;
+  }
+
+  replyBar =
+    document.createElement('div');
+
+  replyBar.className =
+    'reply-bar hidden';
+
+  const info =
+    document.createElement('div');
+
+  info.className =
+    'reply-bar-info';
+
+  const label =
+    document.createElement('div');
+
+  label.className =
+    'reply-bar-label';
+
+  label.textContent =
+    '↩ Replying to';
+
+  replyBarName =
+    document.createElement('div');
+
+  replyBarName.className =
+    'reply-bar-name';
+
+  replyBarText =
+    document.createElement('div');
+
+  replyBarText.className =
+    'reply-bar-text';
+
+  info.appendChild(label);
+  info.appendChild(replyBarName);
+  info.appendChild(replyBarText);
+
+  const cancel =
+    document.createElement('button');
+
+  cancel.type = 'button';
+  cancel.className = 'reply-bar-cancel';
+  cancel.title = 'Cancel reply';
+  cancel.textContent = '×';
+
+  cancel.addEventListener(
+    'click',
+    clearReply
+  );
+
+  replyBar.appendChild(info);
+  replyBar.appendChild(cancel);
+
+  composer.parentNode.insertBefore(
+    replyBar,
+    composer
+  );
+}
+
+
+function setReplyTarget(message) {
+
+  if (
+    !message ||
+    !message.name
+  ) {
+    return;
+  }
+
+  const threadName =
+    message.thread?.name;
+
+  if (!threadName) {
+    console.warn(
+      'Cannot reply: message has no thread name',
+      message
+    );
+
+    return;
+  }
+
+  replyingTo = {
+    message,
+    threadName
+  };
+
+  createReplyBar();
+
+  if (!replyBar) {
+    return;
+  }
+
+  replyBarName.textContent =
+    senderName(message);
+
+  const originalText =
+    getMessageText(message);
+
+  if (originalText) {
+    replyBarText.textContent =
+      originalText.length > 120
+        ? `${originalText.slice(0, 120)}…`
+        : originalText;
+  } else if (
+    Array.isArray(message.attachment) &&
+    message.attachment.length
+  ) {
+    replyBarText.textContent =
+      message.attachment.length === 1
+        ? 'Attachment'
+        : `${message.attachment.length} attachments`;
+  } else {
+    replyBarText.textContent =
+      'Message';
+  }
+
+  replyBar.classList.remove('hidden');
+
+  messageInput.focus();
+}
+
+
+function clearReply() {
+
+  replyingTo = null;
+
+  if (replyBar) {
+    replyBar.classList.add('hidden');
+  }
+
+  messageInput.focus();
+}
+
+
+function createReplyButton(message) {
+
+  const actions =
+    document.createElement('div');
+
+  actions.className =
+    'message-actions';
+
+  const button =
+    document.createElement('button');
+
+  button.type = 'button';
+  button.className = 'reply-button';
+  button.textContent = '↩ Reply';
+  button.title = 'Reply to this message';
+
+  if (!message.thread?.name) {
+    button.disabled = true;
+    button.title =
+      'This message cannot be replied to';
+  } else {
+    button.addEventListener(
+      'click',
+      event => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        setReplyTarget(message);
+      }
+    );
+  }
+
+  actions.appendChild(button);
+
+  return actions;
+}
+
+
+createReplyBar();
 
 let spaces = [];
 let selectedSpace = null;
 let socket = null;
+
+/* =====================================================
+   REPLY STATE
+===================================================== */
+
+
+
 
 
 /* =====================================================
@@ -707,13 +920,226 @@ function getMessageText(message) {
     return message.formattedText;
   }
 
-  if (
-    message.attachment
-  ) {
-    return '📎 Attachment';
+  if (Array.isArray(message.attachment) &&
+      message.attachment.length) {
+    return '';
   }
 
   return '(message)';
+}
+
+
+function attachmentDownloadUrl(attachment) {
+
+  const resourceName =
+    attachment?.attachmentDataRef?.resourceName;
+
+  if (!resourceName) {
+    return null;
+  }
+
+  const params =
+    new URLSearchParams({
+      resourceName,
+      filename:
+        attachment.contentName ||
+        'attachment',
+      contentType:
+        attachment.contentType ||
+        'application/octet-stream'
+    });
+
+  return `/api/attachments/download?${params.toString()}`;
+}
+
+
+function renderAttachments(container, message) {
+
+  if (
+    !Array.isArray(message.attachment) ||
+    !message.attachment.length
+  ) {
+    return;
+  }
+
+  const attachments =
+    document.createElement('div');
+
+  attachments.className =
+    'message-attachments';
+
+  for (const attachment of message.attachment) {
+
+    const name =
+      attachment.contentName ||
+      'Attachment';
+
+    const contentType =
+      attachment.contentType ||
+      'application/octet-stream';
+
+    const resourceName =
+      attachment
+        .attachmentDataRef
+        ?.resourceName;
+
+    const downloadUrl =
+      attachmentDownloadUrl(
+        attachment
+      );
+
+    const card =
+      document.createElement('div');
+
+    card.className =
+      'attachment-card';
+
+    if (
+      contentType.startsWith('image/') &&
+      downloadUrl
+    ) {
+
+      const image =
+        document.createElement('img');
+
+      image.className =
+        'attachment-image';
+
+      image.src =
+        downloadUrl;
+
+      image.alt =
+        name;
+
+      image.loading =
+        'lazy';
+
+      image.onerror =
+        () => {
+          image.remove();
+          card.classList.add(
+            'attachment-image-failed'
+          );
+        };
+
+      card.appendChild(image);
+    }
+
+    const info =
+      document.createElement('div');
+
+    info.className =
+      'attachment-info';
+
+    const icon =
+      document.createElement('span');
+
+    icon.className =
+      'attachment-icon';
+
+    if (contentType.startsWith('image/')) {
+      icon.textContent = '🖼️';
+    } else if (contentType.startsWith('video/')) {
+      icon.textContent = '🎬';
+    } else if (contentType.startsWith('audio/')) {
+      icon.textContent = '🎵';
+    } else if (
+      contentType.includes('pdf')
+    ) {
+      icon.textContent = '📕';
+    } else if (
+      contentType.includes('zip') ||
+      contentType.includes('compressed')
+    ) {
+      icon.textContent = '🗜️';
+    } else {
+      icon.textContent = '📎';
+    }
+
+    const details =
+      document.createElement('div');
+
+    details.className =
+      'attachment-details';
+
+    const title =
+      document.createElement('div');
+
+    title.className =
+      'attachment-name';
+
+    title.textContent =
+      name;
+
+    details.appendChild(title);
+
+    const type =
+      document.createElement('div');
+
+    type.className =
+      'attachment-type';
+
+    type.textContent =
+      contentType;
+
+    details.appendChild(type);
+
+    info.appendChild(icon);
+    info.appendChild(details);
+
+    if (downloadUrl) {
+
+      const download =
+        document.createElement('a');
+
+      download.className =
+        'attachment-download';
+
+      download.href =
+        downloadUrl;
+
+      download.target =
+        '_blank';
+
+      download.rel =
+        'noopener';
+
+      download.textContent =
+        'Open';
+
+      info.appendChild(download);
+
+    } else if (attachment.downloadUri) {
+
+      const download =
+        document.createElement('a');
+
+      download.className =
+        'attachment-download';
+
+      download.href =
+        attachment.downloadUri;
+
+      download.target =
+        '_blank';
+
+      download.rel =
+        'noopener';
+
+      download.textContent =
+        'Open';
+
+      info.appendChild(download);
+    }
+
+    card.appendChild(info);
+
+    attachments.appendChild(card);
+  }
+
+  container.appendChild(
+    attachments
+  );
 }
 
 
@@ -792,11 +1218,6 @@ function appendMessage(
       message.name
     );
 
-  /*
-    If it already exists, refresh it
-    instead of creating a duplicate.
-  */
-
   if (existing) {
 
     updateMessageElement(
@@ -830,10 +1251,6 @@ function appendMessage(
 
   avatar.className =
     'message-avatar';
-
-  /*
-    Google Chat may provide avatarUrl.
-  */
 
   if (
     message.sender?.avatarUrl
@@ -906,11 +1323,37 @@ function appendMessage(
   bubble.className =
     'message-bubble';
 
-  bubble.textContent =
+  const text =
     getMessageText(message);
+
+  if (text) {
+
+    const textNode =
+      document.createElement('div');
+
+    textNode.className =
+      'message-text';
+
+    textNode.textContent =
+      text;
+
+    bubble.appendChild(
+      textNode
+    );
+  }
+
+  renderAttachments(
+    bubble,
+    message
+  );
 
   content.appendChild(header);
   content.appendChild(bubble);
+
+  const actions =
+    createReplyButton(message);
+
+  content.appendChild(actions);
 
   if (
     message.updateTime &&
@@ -935,10 +1378,16 @@ function appendMessage(
   messages.appendChild(wrapper);
 
   if (live) {
-    wrapper.classList.add('message-live');
+
+    wrapper.classList.add(
+      'message-live'
+    );
 
     setTimeout(
-      () => wrapper.classList.remove('message-live'),
+      () =>
+        wrapper.classList.remove(
+          'message-live'
+        ),
       700
     );
 
@@ -958,8 +1407,32 @@ function updateMessageElement(
     );
 
   if (bubble) {
-    bubble.textContent =
+
+    bubble.innerHTML = '';
+
+    const text =
       getMessageText(message);
+
+    if (text) {
+
+      const textNode =
+        document.createElement('div');
+
+      textNode.className =
+        'message-text';
+
+      textNode.textContent =
+        text;
+
+      bubble.appendChild(
+        textNode
+      );
+    }
+
+    renderAttachments(
+      bubble,
+      message
+    );
   }
 
   const sender =
@@ -983,6 +1456,26 @@ function updateMessageElement(
         message.updateTime ||
         message.createTime
       );
+  }
+
+  const oldActions =
+    element.querySelector(
+      '.message-actions'
+    );
+
+  if (oldActions) {
+    oldActions.remove();
+  }
+
+  const updatedContent =
+    element.querySelector(
+      '.message-content'
+    );
+
+  if (updatedContent) {
+    updatedContent.appendChild(
+      createReplyButton(message)
+    );
   }
 
   if (
@@ -1011,7 +1504,9 @@ function updateMessageElement(
         );
 
       if (content) {
-        content.appendChild(edited);
+        content.appendChild(
+          edited
+        );
       }
     }
   }
@@ -1209,7 +1704,12 @@ async function sendMessage() {
   const text =
     messageInput.value.trim();
 
-  if (!text) {
+  const file =
+    typeof fileInput !== 'undefined'
+      ? fileInput.files[0]
+      : null;
+
+  if (!text && !file) {
     return;
   }
 
@@ -1223,22 +1723,64 @@ async function sendMessage() {
         selectedSpace.name
       );
 
-    const response =
-      await fetch(
-        `/api/spaces/${encoded}/messages`,
-        {
-          method: 'POST',
-          credentials: 'same-origin',
-          headers: {
-            'Content-Type':
-              'application/json'
-          },
-          body:
-            JSON.stringify({
-              text
-            })
-        }
+    const replyThreadName =
+      replyingTo?.threadName || '';
+
+    let response;
+
+    if (file) {
+
+      const formData =
+        new FormData();
+
+      formData.append(
+        'text',
+        text
       );
+
+      formData.append(
+        'file',
+        file,
+        file.name
+      );
+
+      if (replyThreadName) {
+        formData.append(
+          'replyThreadName',
+          replyThreadName
+        );
+      }
+
+      response =
+        await fetch(
+          `/api/spaces/${encoded}/attachments`,
+          {
+            method: 'POST',
+            credentials: 'same-origin',
+            body: formData
+          }
+        );
+
+    } else {
+
+      response =
+        await fetch(
+          `/api/spaces/${encoded}/messages`,
+          {
+            method: 'POST',
+            credentials: 'same-origin',
+            headers: {
+              'Content-Type':
+                'application/json'
+            },
+            body:
+              JSON.stringify({
+                text,
+                replyThreadName
+              })
+          }
+        );
+    }
 
     if (
       response.status === 401
@@ -1254,11 +1796,18 @@ async function sendMessage() {
 
       throw new Error(
         data.error ||
-        'Failed to send message'
+        'Failed to send'
       );
     }
 
     messageInput.value = '';
+
+    if (file) {
+      fileInput.value = '';
+      updateAttachmentLabel();
+    }
+
+    clearReply();
 
     autoResize();
 
@@ -1270,6 +1819,7 @@ async function sendMessage() {
     );
 
     alert(
+      error.message ||
       'Failed to send message.'
     );
 
@@ -1280,6 +1830,67 @@ async function sendMessage() {
 
     messageInput.focus();
   }
+}
+
+
+function updateAttachmentLabel() {
+
+  if (
+    typeof attachmentLabel === 'undefined'
+  ) {
+    return;
+  }
+
+  if (
+    fileInput.files &&
+    fileInput.files.length
+  ) {
+
+    const file =
+      fileInput.files[0];
+
+    const sizeMB =
+      file.size /
+      (1024 * 1024);
+
+    attachmentLabel.textContent =
+      `${file.name} · ${sizeMB.toFixed(1)} MB`;
+
+    attachmentLabel.classList.add(
+      'has-file'
+    );
+
+  } else {
+
+    attachmentLabel.textContent =
+      'Attach a file';
+
+    attachmentLabel.classList.remove(
+      'has-file'
+    );
+  }
+}
+
+
+if (
+  typeof attachButton !== 'undefined'
+) {
+
+  attachButton.addEventListener(
+    'click',
+    () => fileInput.click()
+  );
+}
+
+
+if (
+  typeof fileInput !== 'undefined'
+) {
+
+  fileInput.addEventListener(
+    'change',
+    updateAttachmentLabel
+  );
 }
 
 

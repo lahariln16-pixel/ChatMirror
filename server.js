@@ -211,15 +211,77 @@ async function listMessages(spaceName) {
     return messages;
 }
 
-async function sendMessage(spaceName, text) {
-    const response = await chat.spaces.messages.create({
+async function sendMessage(
+    spaceName,
+    text,
+    attachmentDataRef = null,
+    replyThreadName = null
+) {
+    const requestBody = {};
+
+    if (text) {
+        requestBody.text = text;
+    }
+
+    if (attachmentDataRef) {
+        requestBody.attachment = [
+            {
+                attachmentDataRef
+            }
+        ];
+    }
+
+    const request = {
+        parent: spaceName,
+        requestBody
+    };
+
+    if (replyThreadName) {
+        request.messageReplyOption =
+            'REPLY_MESSAGE_OR_FAIL';
+
+        requestBody.thread = {
+            name: replyThreadName
+        };
+    }
+
+    const response =
+        await chat.spaces.messages.create(request);
+
+    return response.data;
+}
+
+async function uploadChatAttachment(
+    spaceName,
+    filename,
+    contentType,
+    filePath
+) {
+    const fs = require('fs');
+
+    console.log('📎 Upload details:');
+    console.log('   filename:', JSON.stringify(filename));
+    console.log('   contentType:', JSON.stringify(contentType));
+    console.log('   filePath:', filePath);
+
+    if (!filename) {
+        throw new Error('Attachment filename is missing');
+    }
+
+    const response = await chat.media.upload({
         parent: spaceName,
         requestBody: {
-            text
+            filename: filename
+        },
+        media: {
+            mimeType: contentType || 'application/octet-stream',
+            body: fs.createReadStream(filePath)
         }
     });
 
-    return response.data;
+    console.log('📎 Google Chat upload response:', response.data);
+
+    return response.data?.attachmentDataRef || response.data;
 }
 
 // --------------------------------------------------
@@ -1120,6 +1182,195 @@ server.on('request', async (req, res) => {
             }));
         }
 
+        // ---------------- ATTACHMENT HELPERS ----------------
+
+        async function parseMultipartAttachment(req, maxBytes = 200 * 1024 * 1024) {
+            const Busboy = require('busboy');
+            const fs = require('fs');
+            const os = require('os');
+            const path = require('path');
+            const crypto = require('crypto');
+
+            return await new Promise((resolve, reject) => {
+                let finished = false;
+                let totalBytes = 0;
+                let fileInfo = null;
+                let fileStream = null;
+                let filePath = null;
+                const fields = {};
+
+                let bb;
+
+                try {
+                    bb = Busboy({
+                        headers: req.headers,
+                        limits: {
+                            files: 1,
+                            fileSize: maxBytes
+                        }
+                    });
+                } catch (error) {
+                    reject(error);
+                    return;
+                }
+
+                const cleanup = () => {
+                    if (fileStream) {
+                        try {
+                            fileStream.destroy();
+                        } catch {}
+                    }
+
+                    if (filePath) {
+                        try {
+                            fs.unlinkSync(filePath);
+                        } catch {}
+                    }
+                };
+
+                bb.on('field', (name, value) => {
+                    fields[name] = value;
+                });
+
+                bb.on('file', (name, stream, info) => {
+                    if (name !== 'file') {
+                        stream.resume();
+                        return;
+                    }
+
+                    const safeName =
+                        path.basename(info.filename || 'attachment');
+
+                    filePath = path.join(
+                        os.tmpdir(),
+                        `chatmirror-${crypto.randomUUID()}-${safeName}`
+                    );
+
+                    fileInfo = {
+                        filename: safeName,
+                        contentType:
+                            info.mimeType ||
+                            'application/octet-stream'
+                    };
+
+                    fileStream = fs.createWriteStream(filePath);
+
+                    stream.on('data', chunk => {
+                        totalBytes += chunk.length;
+
+                        if (totalBytes > maxBytes) {
+                            stream.destroy(
+                                new Error(
+                                    'Attachment exceeds the 200 MB limit'
+                                )
+                            );
+                        }
+                    });
+
+                    stream.on('limit', () => {
+                        stream.destroy(
+                            new Error(
+                                'Attachment exceeds the 200 MB limit'
+                            )
+                        );
+                    });
+
+                    stream.on('error', error => {
+                        if (!finished) {
+                            finished = true;
+                            cleanup();
+                            reject(error);
+                        }
+                    });
+
+                    fileStream.on('error', error => {
+                        if (!finished) {
+                            finished = true;
+                            cleanup();
+                            reject(error);
+                        }
+                    });
+
+                    stream.pipe(fileStream);
+                });
+
+                bb.on('error', error => {
+                    if (!finished) {
+                        finished = true;
+                        cleanup();
+                        reject(error);
+                    }
+                });
+
+                bb.on('finish', () => {
+                    if (finished) {
+                        return;
+                    }
+
+                    finished = true;
+
+                    if (!fileInfo || !filePath) {
+                        reject(
+                            new Error(
+                                'No attachment file was provided'
+                            )
+                        );
+                        return;
+                    }
+
+                    fileStream.end(() => {
+                        resolve({
+                            fields,
+                            filePath,
+                            fileInfo,
+                            size: totalBytes,
+                            cleanup
+                        });
+                    });
+                });
+
+                req.pipe(bb);
+            });
+        }
+
+        async function downloadChatAttachment(
+            resourceName,
+            res,
+            filename,
+            contentType
+        ) {
+            const response = await chat.media.download(
+                {
+                    resourceName,
+                    alt: 'media'
+                },
+                {
+                    responseType: 'stream'
+                }
+            );
+
+            res.statusCode = 200;
+
+            res.setHeader(
+                'Content-Type',
+                contentType || 'application/octet-stream'
+            );
+
+            res.setHeader(
+                'Content-Disposition',
+                `inline; filename="${String(
+                    filename || 'attachment'
+                ).replace(/["\\\r\n]/g, '_')}"`
+            );
+
+            res.setHeader(
+                'Cache-Control',
+                'private, max-age=300'
+            );
+
+            response.data.pipe(res);
+        }
+
         // ---------------- PROTECT API ----------------
 
         if (url.pathname.startsWith('/api/')) {
@@ -1186,7 +1437,11 @@ server.on('request', async (req, res) => {
 
             const body = await parseBody(req);
 
-            const text = String(body.text || '').trim();
+            const text =
+                String(body.text || '').trim();
+
+            const replyThreadName =
+                String(body.replyThreadName || '').trim();
 
             if (!text) {
                 return sendJSON(res, 400, {
@@ -1194,11 +1449,145 @@ server.on('request', async (req, res) => {
                 });
             }
 
-            const message = await sendMessage(spaceName, text);
+            if (
+                replyThreadName &&
+                !replyThreadName.startsWith(
+                    `${spaceName}/threads/`
+                )
+            ) {
+                return sendJSON(res, 400, {
+                    error: 'Invalid reply thread'
+                });
+            }
+
+            const message =
+                await sendMessage(
+                    spaceName,
+                    text,
+                    null,
+                    replyThreadName || null
+                );
 
             return sendJSON(res, 200, {
                 message
             });
+        }
+
+        // ---------------- SEND ATTACHMENT ----------------
+
+        if (
+            req.method === 'POST' &&
+            url.pathname.startsWith('/api/spaces/') &&
+            url.pathname.endsWith('/attachments')
+        ) {
+            const encodedSpace = url.pathname
+                .slice('/api/spaces/'.length)
+                .slice(0, -'/attachments'.length);
+
+            const spaceName = decodeURIComponent(encodedSpace);
+
+            if (!spaceName.startsWith('spaces/')) {
+                return sendJSON(res, 400, {
+                    error: 'Invalid space'
+                });
+            }
+
+            const upload = await parseMultipartAttachment(req);
+
+            try {
+                const text =
+                    String(upload.fields.text || '').trim();
+
+                const replyThreadName =
+                    String(
+                        upload.fields.replyThreadName || ''
+                    ).trim();
+
+                if (
+                    replyThreadName &&
+                    !replyThreadName.startsWith(
+                        `${spaceName}/threads/`
+                    )
+                ) {
+                    throw new Error(
+                        'Invalid reply thread'
+                    );
+                }
+
+                console.log(
+                    `📎 Uploading attachment: ${upload.fileInfo.filename} (${upload.size} bytes)`
+                );
+
+                const attachmentDataRef =
+                    await uploadChatAttachment(
+                        spaceName,
+                        upload.fileInfo.filename,
+                        upload.fileInfo.contentType,
+                        upload.filePath
+                    );
+
+                if (
+                    !attachmentDataRef ||
+                    !(
+                        attachmentDataRef.attachmentUploadToken ||
+                        attachmentDataRef.resourceName
+                    )
+                ) {
+                    throw new Error(
+                        'Google Chat did not return an attachment reference'
+                    );
+                }
+
+                const message =
+                    await sendMessage(
+                        spaceName,
+                        text,
+                        attachmentDataRef,
+                        replyThreadName || null
+                    );
+
+                console.log(
+                    `📎 Attachment message sent: ${message.name}`
+                );
+
+                return sendJSON(res, 200, {
+                    message
+                });
+
+            } finally {
+                upload.cleanup();
+            }
+        }
+
+        // ---------------- DOWNLOAD ATTACHMENT ----------------
+
+        if (
+            req.method === 'GET' &&
+            url.pathname === '/api/attachments/download'
+        ) {
+            const resourceName =
+                url.searchParams.get('resourceName');
+
+            const filename =
+                url.searchParams.get('filename') ||
+                'attachment';
+
+            const contentType =
+                url.searchParams.get('contentType') ||
+                'application/octet-stream';
+
+            if (!resourceName) {
+                return sendJSON(res, 400, {
+                    error: 'Missing attachment resourceName'
+                });
+            }
+
+            return await downloadChatAttachment(
+                resourceName,
+                res,
+                filename,
+                contentType
+            );
         }
 
         // ---------------- STATIC FILES ----------------
