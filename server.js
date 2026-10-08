@@ -145,6 +145,47 @@ async function listSpaces() {
         pageToken = response.data.nextPageToken;
     } while (pageToken);
 
+    // Enrich direct messages with the other member's name/avatar.
+    for (const space of spaces) {
+        if (space.spaceType !== 'DIRECT_MESSAGE') {
+            continue;
+        }
+
+        try {
+            const response = await chat.spaces.members.list({
+                parent: space.name,
+                pageSize: 100
+            });
+
+            const members = response.data.memberships || [];
+
+            // Find the human member who isn't the authenticated user.
+            const otherMember = members.find(member => {
+                const name = member.member?.name || '';
+                return !name.endsWith('/' + process.env.GOOGLE_CHAT_USER_ID);
+            }) || members[0];
+
+            if (otherMember?.member) {
+                const person = otherMember.member;
+
+                if (person.displayName) {
+                    space.displayName = person.displayName;
+                }
+
+                if (person.avatarUrl) {
+                    space.avatarUrl = person.avatarUrl;
+                }
+
+                space.dmMember = person;
+            }
+        } catch (error) {
+            console.warn(
+                `⚠️ Could not resolve DM member for ${space.name}:`,
+                error.message
+            );
+        }
+    }
+
     return spaces;
 }
 

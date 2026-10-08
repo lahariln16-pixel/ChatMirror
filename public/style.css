@@ -750,3 +750,82 @@ button {
 ::-webkit-scrollbar-thumb:hover {
   background: #3a3a3a;
 }
+
+/* =====================================================
+   MESSAGE AVATARS
+===================================================== */
+
+.message {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.message-avatar {
+  width: 34px;
+  height: 34px;
+
+  min-width: 34px;
+  min-height: 34px;
+
+  margin-top: 2px;
+
+  border-radius: 50%;
+  overflow: hidden;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background:
+    linear-gradient(
+      135deg,
+      #a8002c,
+      #4a0015
+    );
+
+  color: #fff;
+
+  font-size: 13px;
+  font-weight: 700;
+
+  border: 1px solid #3a101b;
+}
+
+.message-avatar img {
+  width: 100%;
+  height: 100%;
+
+  max-width: none;
+  max-height: none;
+
+  display: block;
+
+  object-fit: cover;
+  border-radius: 50%;
+}
+
+.message-content {
+  min-width: 0;
+}
+
+.message-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+@media (max-width: 700px) {
+
+  .message-avatar {
+    width: 30px;
+    height: 30px;
+
+    min-width: 30px;
+    min-height: 30px;
+
+    font-size: 11px;
+  }
+
+}
+
