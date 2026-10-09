@@ -1,4 +1,5 @@
 let socket = null;
+let selectedSpace = null;
 const loginScreen =
   document.getElementById('loginScreen');
 
