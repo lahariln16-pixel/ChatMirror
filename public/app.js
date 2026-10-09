@@ -1,3 +1,4 @@
+let socket = null;
 const loginScreen =
   document.getElementById('loginScreen');
 
