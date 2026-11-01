@@ -32,37 +32,74 @@ if (!PASSWORD_HASH || !SESSION_SECRET) {
     process.exit(1);
 }
 
-console.log('🔐 Loading OAuth credentials...');
+let auth;
+let chat;
 
-if (!fs.existsSync(CREDENTIALS_FILE)) {
-    console.error('❌ credentials.json not found');
-    process.exit(1);
+async function loadGoogleAccessToken() {
+    if (process.env.TOKEN_NEXUS_URL && process.env.TOKEN_NEXUS_CLIENT_KEY) {
+        const baseUrl = process.env.TOKEN_NEXUS_URL.replace(/\\/+$/, '');
+        const response = await fetch(
+            baseUrl + '/api/client/chat-mirror/access-token',
+            {
+                headers: {
+                    Authorization: 'Bearer ' + process.env.TOKEN_NEXUS_CLIENT_KEY,
+                    Accept: 'application/json'
+                },
+                signal: AbortSignal.timeout(10000)
+            }
+        );
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok || typeof payload.accessToken !== 'string') {
+            const reason = typeof payload.error === 'string' ? payload.error : 'token_nexus_unavailable';
+            throw new Error('Token Nexus could not provide a Google Chat token: ' + reason);
+        }
+        return {
+            access_token: payload.accessToken,
+            expiry_date: payload.expiresAt ? Date.parse(payload.expiresAt) : undefined,
+            scope: Array.isArray(payload.scopes) ? payload.scopes.join(' ') : undefined,
+            token_type: 'Bearer'
+        };
+    }
+
+    if (!fs.existsSync(TOKEN_FILE)) {
+        throw new Error('Google token file not found. Configure Token Nexus or restore token.json.');
+    }
+    return JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8'));
 }
 
-if (!fs.existsSync(TOKEN_FILE)) {
-    console.error('❌ token.json not found');
-    process.exit(1);
+async function updateGoogleAccessToken() {
+    const token = await loadGoogleAccessToken();
+    auth.setCredentials(token);
 }
 
-const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'));
-const token = JSON.parse(fs.readFileSync(TOKEN_FILE, 'utf8'));
+async function initializeGoogleAuth() {
+    let oauth = {};
+    if (fs.existsSync(CREDENTIALS_FILE)) {
+        const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_FILE, 'utf8'));
+        oauth = credentials.installed || credentials.web || {};
+    } else if (!(process.env.TOKEN_NEXUS_URL && process.env.TOKEN_NEXUS_CLIENT_KEY)) {
+        throw new Error('credentials.json not found. Configure Token Nexus or provide Google OAuth credentials.');
+    }
 
-const oauth = credentials.installed || credentials.web;
+    auth = new google.auth.OAuth2(
+        oauth.client_id,
+        oauth.client_secret,
+        oauth.redirect_uris?.[0] || 'http://localhost'
+    );
+    await updateGoogleAccessToken();
+    chat = google.chat({ version: 'v1', auth });
 
-const auth = new google.auth.OAuth2(
-    oauth.client_id,
-    oauth.client_secret,
-    oauth.redirect_uris?.[0] || 'http://localhost'
-);
+    if (process.env.TOKEN_NEXUS_URL && process.env.TOKEN_NEXUS_CLIENT_KEY) {
+        const timer = setInterval(() => {
+            updateGoogleAccessToken().catch(error => {
+                console.error('Token Nexus refresh check failed:', error.message);
+            });
+        }, 10 * 60 * 1000);
+        timer.unref?.();
+    }
 
-auth.setCredentials(token);
-
-const chat = google.chat({
-    version: 'v1',
-    auth
-});
-
-console.log('   ✅ OAuth token loaded');
+    console.log('   ✅ Google Chat access token loaded');
+}
 
 const pubsubBase =
     `https://pubsub.googleapis.com/v1/projects/${PROJECT_ID}`;
@@ -1654,23 +1691,28 @@ server.on('request', async (req, res) => {
 // START
 // --------------------------------------------------
 
-startWorkspaceSubscriptionManager();
+initializeGoogleAuth().then(() => {
+    startWorkspaceSubscriptionManager();
 
-server.listen(PORT, HOST, () => {
-    console.log('');
-    console.log('╔══════════════════════════════════════════════╗');
-    console.log('║              CHAT MIRROR 🔴                 ║');
-    console.log('╠══════════════════════════════════════════════╣');
-    console.log(`║  http://${HOST}:${PORT}                    ║`);
-    console.log('║                                              ║');
-    console.log('║  🔐 Password protection: ENABLED            ║');
-    console.log('║  ⚡ Live Chat Events: ENABLED               ║');
-    console.log('║  📡 Pub/Sub REST receiver: ENABLED          ║');
-    console.log('║  🌐 WebSocket: ENABLED                      ║');
-    console.log('╚══════════════════════════════════════════════╝');
-    console.log('');
+    server.listen(PORT, HOST, () => {
+        console.log('');
+        console.log('╔══════════════════════════════════════════════╗');
+        console.log('║              CHAT MIRROR 🔴                 ║');
+        console.log('╠══════════════════════════════════════════════╣');
+        console.log(`║  http://${HOST}:${PORT}                    ║`);
+        console.log('║                                              ║');
+        console.log('║  🔐 Password protection: ENABLED            ║');
+        console.log('║  ⚡ Live Chat Events: ENABLED               ║');
+        console.log('║  📡 Pub/Sub REST receiver: ENABLED          ║');
+        console.log('║  🌐 WebSocket: ENABLED                      ║');
+        console.log('╚══════════════════════════════════════════════╝');
+        console.log('');
 
-    receiveLoop();
+        receiveLoop();
+    });
+}).catch(error => {
+    console.error('❌ Google authentication initialization failed:', error.message);
+    process.exit(1);
 });
 
 process.on('SIGINT', () => {
