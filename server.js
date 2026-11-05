@@ -37,7 +37,7 @@ let chat;
 
 async function loadGoogleAccessToken() {
     if (process.env.TOKEN_NEXUS_URL && process.env.TOKEN_NEXUS_CLIENT_KEY) {
-        const baseUrl = process.env.TOKEN_NEXUS_URL.replace(/\\/+$/, '');
+        const baseUrl = process.env.TOKEN_NEXUS_URL.replace(/\/+$/, '');
         const response = await fetch(
             baseUrl + '/api/client/chat-mirror/access-token',
             {
