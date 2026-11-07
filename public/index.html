@@ -2,240 +2,94 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0"
-  >
-  <title>ChatMirror</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#11131d">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="ChatMirror — your conversations, reflected in real time.">
+  <title>ChatMirror — Live Conversations</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/chatmirror-void.css">
 </head>
 
 <body>
-
   <!-- LOGIN -->
   <section id="loginScreen" class="screen login-screen">
-
     <div class="login-glow"></div>
-
     <div class="login-card">
-
       <div class="logo">
         <span class="logo-dot"></span>
         CHAT<span>MIRROR</span>
       </div>
-
-      <div class="lock-icon">🔐</div>
-
+      <div class="lock-icon" aria-hidden="true">🔐</div>
       <h1>Secure Access</h1>
-
-      <p class="login-subtitle">
-        Enter your password to access ChatMirror
-      </p>
-
+      <p class="login-subtitle">Enter your password to access ChatMirror</p>
       <form id="loginForm">
-
         <div class="input-wrapper">
-          <input
-            id="passwordInput"
-            type="password"
-            placeholder="Password"
-            autocomplete="current-password"
-            autofocus
-          >
-
-          <button
-            type="button"
-            id="togglePassword"
-            class="password-toggle"
-          >
-            👁
-          </button>
+          <input id="passwordInput" type="password" placeholder="Password" autocomplete="current-password" autofocus aria-label="Password">
+          <button type="button" id="togglePassword" class="password-toggle" aria-label="Show password" aria-pressed="false">👁</button>
         </div>
-
-        <button
-          id="loginButton"
-          class="login-button"
-          type="submit"
-        >
-          <span>UNLOCK</span>
-          <span>→</span>
+        <button id="loginButton" class="login-button" type="submit">
+          <span>UNLOCK</span><span aria-hidden="true">→</span>
         </button>
-
-        <div
-          id="loginError"
-          class="login-error"
-        ></div>
-
+        <div id="loginError" class="login-error" role="alert" aria-live="polite"></div>
       </form>
-
-      <div class="security-note">
-        🔒 Protected ChatMirror session
-      </div>
-
+      <div class="security-note">🔒 Protected ChatMirror session</div>
     </div>
   </section>
 
-
   <!-- APP -->
-  <section
-    id="appScreen"
-    class="app-screen hidden"
-  >
-
-    <aside class="sidebar">
-
+  <section id="appScreen" class="app-screen hidden">
+    <aside class="sidebar" aria-label="Conversations">
       <div class="sidebar-header">
-
         <div class="brand">
           <span class="logo-dot"></span>
-          <div>
-            <strong>CHAT<span>MIRROR</span></strong>
-            <small>LIVE CHAT</small>
-          </div>
+          <div><strong>CHAT<span>MIRROR</span></strong><small>LIVE CHAT</small></div>
         </div>
-
-        <button
-          id="logoutButton"
-          class="logout-button"
-          title="Logout"
-        >
-          ⏻
-        </button>
-
+        <button id="logoutButton" class="logout-button" title="Logout" aria-label="Logout">⏻</button>
       </div>
-
       <div class="sidebar-search">
-        <input
-          id="spaceSearch"
-          type="text"
-          placeholder="Search chats..."
-        >
+        <input id="spaceSearch" type="search" placeholder="Search chats..." aria-label="Search conversations">
       </div>
-
-      <div class="spaces-title">
-        <span>CONVERSATIONS</span>
-        <button id="refreshButton">↻</button>
+      <div class="spaces-title"><span>CONVERSATIONS</span><button id="refreshButton" type="button" aria-label="Refresh conversations">↻</button></div>
+      <div id="spacesList" class="spaces-list" aria-live="polite">
+        <div class="loading">Loading chats...</div>
       </div>
-
-      <div
-        id="spacesList"
-        class="spaces-list"
-      >
-        <div class="loading">
-          Loading chats...
-        </div>
-      </div>
-
     </aside>
 
-
     <main class="chat-panel">
-
       <header class="chat-header">
-
-        <button
-          id="mobileMenuButton"
-          class="mobile-menu"
-        >
-          ☰
-        </button>
-
+        <button id="mobileMenuButton" class="mobile-menu" type="button" aria-label="Open conversations">☰</button>
         <div class="chat-info">
-          <div
-            id="chatTitle"
-            class="chat-title"
-          >
-            Select a conversation
-          </div>
-
-          <div
-            id="chatStatus"
-            class="chat-status"
-          >
-            <span class="status-dot"></span>
-            Connecting...
-          </div>
+          <div id="chatTitle" class="chat-title" aria-live="polite">Select a conversation</div>
+          <div id="chatStatus" class="chat-status"><span class="status-dot"></span>Connecting...</div>
         </div>
-
       </header>
 
-
-      <div
-        id="messages"
-        class="messages"
-      >
-
+      <div id="messages" class="messages" aria-live="polite" aria-relevant="additions text">
         <div class="empty-state">
-
-          <div class="empty-icon">💬</div>
-
+          <div class="empty-icon" aria-hidden="true">💬</div>
           <h2>Welcome to ChatMirror</h2>
-
-          <p>
-            Select a conversation to see your
-            Google Chat messages.
-          </p>
-
+          <p>Select a conversation to see your Google Chat messages.</p>
         </div>
-
       </div>
-
 
       <div class="composer">
-
-        <div
-          id="attachmentLabel"
-          class="attachment-label"
-        >
-          Attach a file
-        </div>
-
+        <div id="attachmentLabel" class="attachment-label">Attach a file</div>
         <div class="composer-inner">
-
-          <input
-            id="fileInput"
-            type="file"
-            hidden
-          >
-
-          <button
-            id="attachButton"
-            class="attach-button"
-            type="button"
-            title="Attach a file"
-          >
-            📎
-          </button>
-
-          <textarea
-            id="messageInput"
-            placeholder="Type a message..."
-            rows="1"
-            disabled
-          ></textarea>
-
-          <button
-            id="sendButton"
-            disabled
-          >
-            ➤
-          </button>
-
+          <input id="fileInput" type="file" hidden>
+          <button id="attachButton" class="attach-button" type="button" title="Attach a file" aria-label="Attach a file">📎</button>
+          <textarea id="messageInput" placeholder="Type a message..." rows="1" disabled aria-label="Write a message"></textarea>
+          <button id="sendButton" type="button" disabled aria-label="Send message">➤</button>
         </div>
-
-        <div class="composer-hint">
-          Press <b>Enter</b> to send ·
-          <b>Shift + Enter</b> for new line
-        </div>
-
+        <div class="composer-hint">Press <b>Enter</b> to send · <b>Shift + Enter</b> for new line</div>
       </div>
-
     </main>
-
   </section>
 
-
-  <script src="/app.js"></script>
-
+  <script src="/motion.js" defer></script>
+  <script src="/app.js" defer></script>
 </body>
 </html>
