@@ -617,7 +617,7 @@ function connectWebSocket() {
 
   socket =
     new WebSocket(
-      `${protocol}//${location.host}/ws`
+      `${protocol}//${location.host}/api/live`
     );
 
   socket.addEventListener(
@@ -699,6 +699,14 @@ function connectWebSocket() {
         }
 
         if (
+          payload.type === 'event' &&
+          payload.event
+        ) {
+          handleLiveEvent(payload.event);
+          return;
+        }
+
+        if (
           payload.type === 'chat_event'
         ) {
           handleLiveEvent(
@@ -750,7 +758,7 @@ async function loadSpaces() {
 
     const response =
       await fetch(
-        '/api/spaces',
+        '/api/chat/spaces',
         {
           credentials: 'same-origin',
           cache: 'no-store'
@@ -762,6 +770,10 @@ async function loadSpaces() {
     ) {
       showLogin();
       return;
+    }
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
     }
 
     const data =
@@ -811,7 +823,7 @@ async function loadMoreSpaces() {
 
     const response =
       await fetch(
-        `/api/spaces?pageToken=${pageToken}`,
+        `/api/chat/spaces?pageToken=${pageToken}`,
         {
           credentials: 'same-origin',
           cache: 'no-store'
@@ -1147,12 +1159,12 @@ async function selectSpace(space) {
 
     const encoded =
       encodeURIComponent(
-        space.name
+        space.name.split('/').pop()
       );
 
     const response =
       await fetch(
-        `/api/spaces/${encoded}/messages`,
+        `/api/chat/spaces/${encoded}/messages`,
         {
           credentials: 'same-origin',
           cache: 'no-store'
@@ -1550,7 +1562,7 @@ async function loadOlderMessages() {
 
     const encoded =
       encodeURIComponent(
-        selectedSpace.name
+        selectedSpace.name.split('/').pop()
       );
 
     const pageToken =
@@ -1560,7 +1572,7 @@ async function loadOlderMessages() {
 
     const response =
       await fetch(
-        `/api/spaces/${encoded}/messages?pageToken=${pageToken}`,
+        `/api/chat/spaces/${encoded}/messages?pageToken=${pageToken}`,
         {
           credentials: 'same-origin',
           cache: 'no-store'
@@ -2450,6 +2462,11 @@ async function sendMessage() {
 
     const encoded =
       encodeURIComponent(
+        selectedSpace.name.split('/').pop()
+      );
+
+    const encodedSpaceName =
+      encodeURIComponent(
         selectedSpace.name
       );
 
@@ -2483,7 +2500,7 @@ async function sendMessage() {
 
       response =
         await fetch(
-          `/api/spaces/${encoded}/attachments`,
+          `/api/spaces/${encodedSpaceName}/attachments`,
           {
             method: 'POST',
             credentials: 'same-origin',
@@ -2495,7 +2512,7 @@ async function sendMessage() {
 
       response =
         await fetch(
-          `/api/spaces/${encoded}/messages`,
+          `/api/chat/spaces/${encoded}/messages`,
           {
             method: 'POST',
             credentials: 'same-origin',
