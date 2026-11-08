@@ -1316,8 +1316,6 @@ async function selectSpace(space) {
   selectedSpace =
     space;
 
-  startMessageAutoRefresh();
-
   /*
     Opening a conversation marks its
     unread messages as read.
@@ -1396,6 +1394,11 @@ async function selectSpace(space) {
 
     messages.innerHTML =
       '<div class="loading">Failed to load messages.</div>';
+
+  } finally {
+    if (selectedSpace && selectedSpace.name === space.name) {
+      startMessageAutoRefresh();
+    }
   }
 }
 
