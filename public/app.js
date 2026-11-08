@@ -1,5 +1,8 @@
 let socket = null;
 let selectedSpace = null;
+const MESSAGE_REFRESH_INTERVAL_MS = 5000;
+let messageRefreshTimer = null;
+let messageRefreshInFlight = false;
 const loginScreen =
   document.getElementById('loginScreen');
 
@@ -627,7 +630,10 @@ if (notificationButton) {
   notificationButton.addEventListener('click', enableBrowserNotifications);
 }
 
-document.addEventListener('visibilitychange', updateUnreadIndicator);
+document.addEventListener('visibilitychange', () => {
+  updateUnreadIndicator();
+  if (!document.hidden) refreshSelectedSpaceMessages();
+});
 window.addEventListener('focus', updateUnreadIndicator);
 
 
@@ -759,6 +765,10 @@ logoutButton.addEventListener(
 
     selectedSpace = null;
     spaces = [];
+    if (messageRefreshTimer) {
+      clearInterval(messageRefreshTimer);
+      messageRefreshTimer = null;
+    }
 
     showLogin();
   }
@@ -1364,6 +1374,8 @@ async function selectSpace(space) {
     const data =
       await response.json();
 
+    if (!selectedSpace || selectedSpace.name !== space.name) return;
+
     messageNextPageToken =
       data.nextPageToken || null;
 
@@ -1382,6 +1394,94 @@ async function selectSpace(space) {
 
     messages.innerHTML =
       '<div class="loading">Failed to load messages.</div>';
+
+  } finally {
+    if (selectedSpace && selectedSpace.name === space.name) {
+      startMessageAutoRefresh();
+    }
+  }
+}
+
+
+function startMessageAutoRefresh() {
+  if (messageRefreshTimer) {
+    clearInterval(messageRefreshTimer);
+  }
+
+  messageRefreshTimer = setInterval(
+    refreshSelectedSpaceMessages,
+    MESSAGE_REFRESH_INTERVAL_MS
+  );
+}
+
+
+async function refreshSelectedSpaceMessages() {
+  const space = selectedSpace;
+
+  if (
+    !space ||
+    appScreen.classList.contains('hidden') ||
+    messageRefreshInFlight
+  ) {
+    return;
+  }
+
+  const spaceName = space.name;
+  const encoded = encodeURIComponent(spaceName.split('/').pop());
+  messageRefreshInFlight = true;
+
+  try {
+    const response = await fetch(
+      `/api/chat/spaces/${encoded}/messages`,
+      {
+        credentials: 'same-origin',
+        cache: 'no-store'
+      }
+    );
+
+    if (response.status === 401) {
+      showLogin();
+      return;
+    }
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+
+    // Ignore a response if the user switched conversations while it loaded.
+    if (!selectedSpace || selectedSpace.name !== spaceName) {
+      return;
+    }
+
+    const latestMessages = Array.isArray(data.messages)
+      ? data.messages
+      : [];
+
+    const wasNearBottom =
+      messages.scrollHeight - messages.scrollTop - messages.clientHeight < 120;
+
+    let addedCount = 0;
+
+    latestMessages
+      .filter(message => message && message.name)
+      .sort((a, b) =>
+        new Date(a.createTime || 0) - new Date(b.createTime || 0)
+      )
+      .forEach(message => {
+        const alreadyRendered = findMessageElement(message.name);
+        appendMessage(message, false);
+        if (!alreadyRendered) addedCount += 1;
+      });
+
+    if (addedCount > 0 && wasNearBottom) {
+      scrollToBottom();
+    }
+  } catch (error) {
+    console.warn('Automatic message refresh failed:', error);
+  } finally {
+    messageRefreshInFlight = false;
   }
 }
 
