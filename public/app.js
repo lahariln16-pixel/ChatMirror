@@ -39,6 +39,9 @@ const chatTitle =
 const chatStatus =
   document.getElementById('chatStatus');
 
+const notificationButton =
+  document.getElementById('notificationButton');
+
 const messages =
   document.getElementById('messages');
 
@@ -424,6 +427,16 @@ function getUnreadCount(spaceName) {
 }
 
 
+function updateUnreadIndicator() {
+  const total = Object.values(unreadCounts)
+    .reduce((sum, value) => sum + Math.max(0, Number(value) || 0), 0);
+
+  document.title = total > 0
+    ? `(${total > 99 ? '99+' : total}) ChatMirror — Industrial Terminal`
+    : 'ChatMirror — Industrial Terminal';
+}
+
+
 function setUnreadCount(
   spaceName,
   count
@@ -447,6 +460,7 @@ function setUnreadCount(
   }
 
   saveUnreadCounts();
+  updateUnreadIndicator();
 }
 
 
@@ -550,9 +564,71 @@ function showApp() {
   loginScreen.classList.add('hidden');
   appScreen.classList.remove('hidden');
 
+  updateNotificationButton();
+  updateUnreadIndicator();
   connectWebSocket();
   loadSpaces();
 }
+
+
+function updateNotificationButton() {
+  if (!notificationButton) return;
+
+  if (!('Notification' in window)) {
+    notificationButton.textContent = 'Notifications unavailable';
+    notificationButton.disabled = true;
+    notificationButton.title = 'This browser does not support notifications';
+    return;
+  }
+
+  const permission = Notification.permission;
+  notificationButton.disabled = permission === 'denied';
+  notificationButton.textContent = permission === 'granted'
+    ? 'Notifications on'
+    : permission === 'denied'
+      ? 'Notifications blocked'
+      : 'Enable notifications';
+  notificationButton.classList.toggle('notifications-enabled', permission === 'granted');
+  notificationButton.title = permission === 'denied'
+    ? 'Allow notifications for this site in your browser settings'
+    : permission === 'granted'
+      ? 'Browser notifications are enabled'
+      : 'Enable desktop notifications for new messages';
+}
+
+
+async function enableBrowserNotifications() {
+  if (!('Notification' in window)) {
+    updateNotificationButton();
+    return;
+  }
+
+  if (Notification.permission === 'granted') {
+    updateNotificationButton();
+    return;
+  }
+
+  if (Notification.permission === 'denied') {
+    updateNotificationButton();
+    return;
+  }
+
+  try {
+    await Notification.requestPermission();
+  } catch (error) {
+    console.warn('Notification permission request failed:', error);
+  }
+
+  updateNotificationButton();
+}
+
+
+if (notificationButton) {
+  notificationButton.addEventListener('click', enableBrowserNotifications);
+}
+
+document.addEventListener('visibilitychange', updateUnreadIndicator);
+window.addEventListener('focus', updateUnreadIndicator);
 
 
 loginForm.addEventListener(
@@ -2346,6 +2422,49 @@ function scrollToBottom() {
    LIVE EVENTS
 ===================================================== */
 
+function notifyIncomingMessage(message, spaceName) {
+  if (
+    !('Notification' in window) ||
+    Notification.permission !== 'granted' ||
+    (!document.hidden && document.hasFocus())
+  ) {
+    return;
+  }
+
+  const space = spaces.find(item => item.name === spaceName);
+  const conversation = space ? getSpaceTitle(space) : 'New message';
+  const sender = senderName(message);
+  const text = getMessageText(message);
+  const body = text && text !== '(message)'
+    ? text.slice(0, 180)
+    : (message.attachment?.length ? 'Sent an attachment' : 'You received a message');
+
+  let notification;
+  try {
+    notification = new Notification(`${sender} · ${conversation}`, {
+      body,
+      tag: message.name || `chatmirror-${spaceName}`,
+      renotify: false,
+      icon: space?.avatarUrl || undefined
+    });
+  } catch (error) {
+    console.warn('Could not show browser notification:', error);
+    return;
+  }
+
+  notification.onclick = () => {
+    window.focus();
+    notification.close();
+    const target = spaces.find(item => item.name === spaceName);
+    if (target) selectSpace(target);
+    else loadSpaces().then(() => {
+      const refreshedTarget = spaces.find(item => item.name === spaceName);
+      if (refreshedTarget) selectSpace(refreshedTarget);
+    });
+  };
+}
+
+
 function handleLiveEvent(payload) {
 
   /*
@@ -2414,13 +2533,16 @@ function handleLiveEvent(payload) {
 
   const ownUserName =
     currentUserId
-      ? `users/${currentUserId}`
+      ? (currentUserId.startsWith('users/') ? currentUserId : `users/${currentUserId}`)
       : '';
+
+  const normalizedSenderName = senderName.replace(/^users\//, '');
+  const normalizedOwnUserName = ownUserName.replace(/^users\//, '');
 
   const isOwnMessage =
     Boolean(
-      ownUserName &&
-      senderName === ownUserName
+      normalizedOwnUserName &&
+      normalizedSenderName === normalizedOwnUserName
     );
 
   /*
@@ -2457,27 +2579,29 @@ function handleLiveEvent(payload) {
       but don't increase unread.
     */
 
-    if (
-      selectedSpace &&
-      spaceName === selectedSpace.name
-    ) {
+    const isSelectedConversation =
+      Boolean(selectedSpace && spaceName === selectedSpace.name);
 
-      appendMessage(
-        message,
-        true
-      );
+    const isActivelyViewingConversation =
+      isSelectedConversation &&
+      !document.hidden &&
+      document.hasFocus();
 
+    if (isActivelyViewingConversation) {
+      appendMessage(message, true);
       return;
     }
 
-    /*
-      Another conversation:
-      increase its unread count.
-    */
+    if (isSelectedConversation) {
+      appendMessage(message, true);
+    }
 
-    incrementUnread(
-      spaceName
-    );
+    /*
+      Keep unread state for every message that arrives
+      while its conversation is not actively being viewed.
+    */
+    incrementUnread(spaceName);
+    notifyIncomingMessage(message, spaceName);
 
     console.log(
       '🔴 Unread message:',
