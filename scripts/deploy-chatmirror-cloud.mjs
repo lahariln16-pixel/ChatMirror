@@ -101,7 +101,9 @@ for (let index = 0; index < buckets.length; index += 1) {
   for (const hash of buckets[index]) {
     const asset = filesByHash.get(hash);
     if (!asset) throw new Error(`Cloudflare requested unknown asset hash: ${hash}`);
-    form.append(hash, new Blob([asset.bytes.toString("base64")], { type: asset.contentType }), hash);
+    // Cloudflare expects each multipart field value to be the Base64 string
+    // itself (not a file upload with a filename).
+    form.append(hash, asset.bytes.toString("base64"));
   }
 
   const response = await fetch(`${apiBase}/accounts/${accountId}/workers/assets/upload?base64=true`, {
@@ -109,9 +111,23 @@ for (let index = 0; index < buckets.length; index += 1) {
     headers: { Authorization: `Bearer ${uploadJwt}` },
     body: form,
   });
-  const result = await response.json();
-  if (!response.ok || !result.success || !result.result?.jwt) {
-    throw new Error(`Asset bucket ${index + 1} upload failed: ${JSON.stringify(result.errors || result)}`);
+  const raw = await response.text();
+  let result;
+  try {
+    result = JSON.parse(raw);
+  } catch {
+    result = { raw };
+  }
+  if (!response.ok || result.success !== true || !result.result?.jwt) {
+    throw new Error(
+      `Asset bucket ${index + 1}/${buckets.length} upload failed (HTTP ${response.status}): ${JSON.stringify({
+        success: result.success,
+        errors: result.errors,
+        messages: result.messages,
+        result: result.result,
+        raw: result.raw,
+      })}`
+    );
   }
   completionJwt = result.result.jwt;
   console.log(`Uploaded asset batch ${index + 1}/${buckets.length}.`);
