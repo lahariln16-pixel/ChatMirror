@@ -118,7 +118,10 @@ for (let index = 0; index < buckets.length; index += 1) {
   } catch {
     result = { raw };
   }
-  if (!response.ok || result.success !== true || !result.result?.jwt) {
+  const isFinalBucket = index === buckets.length - 1;
+  // Cloudflare returns HTTP 202 with no JWT for intermediate batches.
+  // The final batch returns the completion JWT (normally HTTP 201).
+  if (!response.ok || result.success !== true || (isFinalBucket && !result.result?.jwt)) {
     throw new Error(
       `Asset bucket ${index + 1}/${buckets.length} upload failed (HTTP ${response.status}): ${JSON.stringify({
         success: result.success,
@@ -129,8 +132,8 @@ for (let index = 0; index < buckets.length; index += 1) {
       })}`
     );
   }
-  completionJwt = result.result.jwt;
-  console.log(`Uploaded asset batch ${index + 1}/${buckets.length}.`);
+  if (result.result?.jwt) completionJwt = result.result.jwt;
+  console.log(`Uploaded asset batch ${index + 1}/${buckets.length} (HTTP ${response.status}).`);
 }
 
 if (!completionJwt) throw new Error("Cloudflare did not return the asset completion token.");
