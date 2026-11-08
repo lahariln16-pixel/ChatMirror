@@ -92,7 +92,8 @@ const session = await api(`/accounts/${accountId}/workers/scripts/${workerName}/
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ manifest }),
 });
-let completionJwt = session.result?.jwt;
+const uploadJwt = session.result?.jwt;
+let completionJwt = uploadJwt;
 const buckets = session.result?.buckets || [];
 
 for (let index = 0; index < buckets.length; index += 1) {
@@ -105,7 +106,7 @@ for (let index = 0; index < buckets.length; index += 1) {
 
   const response = await fetch(`${apiBase}/accounts/${accountId}/workers/assets/upload?base64=true`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${completionJwt}` },
+    headers: { Authorization: `Bearer ${uploadJwt}` },
     body: form,
   });
   const result = await response.json();
@@ -123,12 +124,12 @@ if (!completionJwt) throw new Error("Cloudflare did not return the asset complet
 const sourceResponse = await api(`/accounts/${accountId}/workers/scripts/${workerName}/content/v2`);
 const sourceText = typeof sourceResponse === "string" ? sourceResponse : sourceResponse.raw;
 if (!sourceText) throw new Error("Could not read the existing Worker module.");
-const boundary = sourceText.match(/^--([^\\r\\n]+)/)?.[1];
+const boundary = sourceText.match(/^--([^\r\n]+)/)?.[1];
 if (!boundary) throw new Error("Could not identify the existing Worker source multipart boundary.");
-const partStart = sourceText.indexOf("\\r\\n\\r\\n") + 4;
-const partEnd = sourceText.lastIndexOf(`\\r\\n--${boundary}--`);
+const partStart = sourceText.indexOf("\r\n\r\n") + 4;
+const partEnd = sourceText.lastIndexOf(`\r\n--${boundary}--`);
 if (partStart < 4 || partEnd <= partStart) throw new Error("Could not extract the existing Worker module.");
-const workerCode = sourceText.slice(partStart, partEnd).replace(/\\r?\\n$/, "");
+const workerCode = sourceText.slice(partStart, partEnd).replace(/\r?\n$/, "");
 
 const metadata = {
   main_module: "worker.js",
@@ -162,9 +163,20 @@ const bindings = versionInfo.result?.resources?.bindings || [];
 const hasAssets = bindings.some(binding => binding.name === "ASSETS" && binding.type === "assets");
 const hasChatConnections = bindings.some(binding => binding.name === "CHAT_CONNECTIONS" && binding.type === "durable_object_namespace");
 const hasPasswordSecret = bindings.some(binding => binding.name === "CHATMIRROR_PASSWORD_HASH" && binding.type === "secret_text");
-const hasSessionSecret = bindings.some(binding => binding.name === "SESSION_SECRET" && binding.type === "secret_text");
-if (!hasAssets || !hasChatConnections || !hasPasswordSecret || !hasSessionSecret) {
-  throw new Error("New version is missing one or more required bindings; refusing to deploy. Bindings: " + JSON.stringify(bindings));
+const requiredSecrets = [
+  "CHATMIRROR_PASSWORD_HASH",
+  "SESSION_SECRET",
+  "CHATMIRROR_EVENT_SECRET",
+  "GOOGLE_CLIENT_ID",
+  "GOOGLE_CLIENT_SECRET",
+  "GOOGLE_REFRESH_TOKEN",
+  "TOKEN_NEXUS_CLIENT_KEY",
+];
+const missingSecrets = requiredSecrets.filter(name =>
+  !bindings.some(binding => binding.name === name && binding.type === "secret_text")
+);
+if (!hasAssets || !hasChatConnections || missingSecrets.length) {
+  throw new Error("New version is missing required bindings; refusing to deploy. Missing secrets: " + JSON.stringify(missingSecrets) + ". Bindings: " + JSON.stringify(bindings));
 }
 
 console.log(`Created version ${versionId}; required chat and auth bindings are present.`);
