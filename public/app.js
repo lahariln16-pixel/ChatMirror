@@ -259,6 +259,97 @@ createReplyBar();
 
 let spaces = [];
 
+// Google Chat people profiles, indexed by their resource name.
+const senderProfiles = new Map();
+const spaceMembersCache = new Map();
+
+function profileForSender(sender) {
+  const name = sender?.name || sender?.member?.name || '';
+  if (!name) return null;
+  return senderProfiles.get(name) ||
+    senderProfiles.get(name.replace(/^users\//, '')) ||
+    null;
+}
+
+function memberResourceName(member) {
+  return member?.member?.name ||
+    member?.user?.name ||
+    member?.name ||
+    '';
+}
+
+function rememberMember(member) {
+  const name = memberResourceName(member);
+  if (!name) return;
+  const profile = {
+    name,
+    displayName: member.displayName || member.user?.displayName || '',
+    avatarUrl: member.avatarUrl || member.user?.avatarUrl || ''
+  };
+  senderProfiles.set(name, profile);
+  senderProfiles.set(name.replace(/^users\//, ''), profile);
+}
+
+async function enrichDirectMessageSpaces(spaceList) {
+  const directMessages = spaceList.filter(space =>
+    space.spaceType === 'DIRECT_MESSAGE' ||
+    space.spaceType === 'SPACE_TYPE_DIRECT_MESSAGE'
+  );
+
+  let cursor = 0;
+  const workers = Array.from(
+    { length: Math.min(4, directMessages.length) },
+    async () => {
+      while (cursor < directMessages.length) {
+        const space = directMessages[cursor++];
+        if (!space.name) continue;
+
+        let members = spaceMembersCache.get(space.name);
+        if (!members) {
+          try {
+            const spaceId = encodeURIComponent(space.name.split('/').pop());
+            const response = await fetch(
+              `/api/chat/spaces/${spaceId}/members`,
+              { credentials: 'same-origin', cache: 'no-store' }
+            );
+            if (!response.ok) continue;
+            const data = await response.json();
+            members = Array.isArray(data.members) ? data.members : [];
+            spaceMembersCache.set(space.name, members);
+          } catch (error) {
+            console.warn('Could not load direct-message members:', space.name, error);
+            continue;
+          }
+        }
+
+        members.forEach(rememberMember);
+        const currentId = (currentUserId || '').replace(/^users\//, '');
+        const other = members.find(member => {
+          const resourceName = memberResourceName(member);
+          return resourceName &&
+            resourceName.replace(/^users\//, '') !== currentId;
+        }) || members.find(member => member.type === 'HUMAN') || members[0];
+
+        if (other) {
+          space.displayName =
+            other.displayName ||
+            other.user?.displayName ||
+            space.displayName ||
+            '';
+          space.avatarUrl =
+            other.avatarUrl ||
+            other.user?.avatarUrl ||
+            space.avatarUrl ||
+            '';
+        }
+      }
+    }
+  );
+
+  await Promise.all(workers);
+}
+
+
 // Chat list pagination
 let spacesNextPageToken = null;
 let loadingMoreSpaces = false;
@@ -782,6 +873,8 @@ async function loadSpaces() {
     spaces =
       data.spaces || [];
 
+    await enrichDirectMessageSpaces(spaces);
+
     spacesNextPageToken =
       data.nextPageToken || null;
 
@@ -848,6 +941,8 @@ async function loadMoreSpaces() {
 
     const newSpaces =
       data.spaces || [];
+
+    await enrichDirectMessageSpaces(newSpaces);
 
     /*
      * Avoid duplicates in case an already-loaded
@@ -1014,8 +1109,20 @@ function renderSpaces() {
     avatar.className =
       'space-avatar';
 
-    avatar.textContent =
-      getSpaceInitial(space);
+    if (space.avatarUrl) {
+      const image = document.createElement('img');
+      image.src = space.avatarUrl;
+      image.alt = getSpaceTitle(space);
+      image.loading = 'lazy';
+      image.referrerPolicy = 'no-referrer';
+      image.onerror = () => {
+        image.remove();
+        avatar.textContent = getSpaceInitial(space);
+      };
+      avatar.appendChild(image);
+    } else {
+      avatar.textContent = getSpaceInitial(space);
+    }
 
     const info =
       document.createElement('div');
@@ -1208,24 +1315,18 @@ async function selectSpace(space) {
 
 function senderName(message) {
 
-  if (
-    message.sender?.displayName
-  ) {
+  if (message.sender?.displayName) {
     return message.sender.displayName;
   }
 
-  if (
-    message.sender?.name
-  ) {
+  const profile = profileForSender(message.sender);
+  if (profile?.displayName) {
+    return profile.displayName;
+  }
 
-    const id =
-      message.sender.name
-        .split('/')
-        .pop();
-
-    if (id) {
-      return `User ${id.slice(-6)}`;
-    }
+  if (message.sender?.name) {
+    const id = message.sender.name.split('/').pop();
+    if (id) return `User ${id.slice(-6)}`;
   }
 
   return 'Unknown';
@@ -1913,15 +2014,19 @@ function appendMessage(
   avatar.className =
     'message-avatar';
 
-  if (
-    message.sender?.avatarUrl
-  ) {
+  const senderProfile = profileForSender(message.sender);
+  const senderAvatarUrl =
+    message.sender?.avatarUrl || senderProfile?.avatarUrl;
+
+  if (senderAvatarUrl) {
 
     const image =
       document.createElement('img');
 
     image.src =
-      message.sender.avatarUrl;
+      senderAvatarUrl;
+    image.loading = 'lazy';
+    image.referrerPolicy = 'no-referrer';
 
     image.alt =
       senderName(message);
