@@ -1129,3 +1129,38 @@ button {
     0 0 8px rgba(168, 0, 44, 0.45);
 }
 
+
+
+/* Browser notification control */
+.notification-button {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding: 9px 12px;
+  border: 1px solid #343434;
+  border-radius: 8px;
+  color: #ddd;
+  background: #111;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  transition: border-color 0.18s, background 0.18s, color 0.18s;
+}
+.notification-button:hover:not(:disabled) {
+  border-color: var(--red);
+  background: #191015;
+}
+.notification-button.notifications-enabled {
+  border-color: rgba(0, 230, 118, 0.4);
+  color: #8af0b5;
+}
+.notification-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+@media (max-width: 520px) {
+  .notification-button {
+    max-width: 118px;
+    padding: 8px;
+    font-size: 9px;
+  }
+}
