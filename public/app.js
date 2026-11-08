@@ -267,7 +267,7 @@ function profileForSender(sender) {
   const name = sender?.name || sender?.member?.name || '';
   if (!name) return null;
   return senderProfiles.get(name) ||
-    senderProfiles.get(name.replace(/^users\\//, '')) ||
+    senderProfiles.get(name.replace(/^users\//, '')) ||
     null;
 }
 
@@ -287,7 +287,7 @@ function rememberMember(member) {
     avatarUrl: member.avatarUrl || member.user?.avatarUrl || ''
   };
   senderProfiles.set(name, profile);
-  senderProfiles.set(name.replace(/^users\\//, ''), profile);
+  senderProfiles.set(name.replace(/^users\//, ''), profile);
 }
 
 async function enrichDirectMessageSpaces(spaceList) {
@@ -323,11 +323,11 @@ async function enrichDirectMessageSpaces(spaceList) {
         }
 
         members.forEach(rememberMember);
-        const currentId = (currentUserId || '').replace(/^users\\//, '');
+        const currentId = (currentUserId || '').replace(/^users\//, '');
         const other = members.find(member => {
           const resourceName = memberResourceName(member);
           return resourceName &&
-            resourceName.replace(/^users\\//, '') !== currentId;
+            resourceName.replace(/^users\//, '') !== currentId;
         }) || members.find(member => member.type === 'HUMAN') || members[0];
 
         if (other) {
